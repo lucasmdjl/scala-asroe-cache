@@ -3,12 +3,7 @@ package dev.lucasmdjl.scala.asroecache
 import dev.lucasmdjl.scala.clock.ManualClock
 
 import java.util.concurrent.atomic.{AtomicInteger, AtomicReference}
-import java.util.concurrent.{
-  CountDownLatch,
-  Executors,
-  TimeUnit,
-  TimeoutException
-}
+import java.util.concurrent.{CountDownLatch, CyclicBarrier, Executors, TimeUnit, TimeoutException}
 import scala.concurrent.duration.DurationInt
 import scala.concurrent.{Await, ExecutionContext, Future}
 import scala.util.Try
@@ -69,12 +64,11 @@ abstract sealed class TestHarness(
   def run(): TestResult = {
     val futures = (1 to threads).map { i =>
       Future {
-        startLatch.countDown()
-        startLatch.await()
+        start.await()
 
         val result = cache.get()
 
-        endLatch.countDown()
+        end.countDown()
         Await.result(result, 1.second)
       }
     }
@@ -124,11 +118,11 @@ abstract sealed class TestHarness(
 
   protected def currentValue: OpaqueValue
 
-  protected def startLatch: CountDownLatch
+  protected def start: CyclicBarrier
 
   protected def afterFetchLatch: CountDownLatch
 
-  protected def endLatch: CountDownLatch
+  protected def end: CountDownLatch
 
   protected def backgroundErrorLatch: CountDownLatch
 
@@ -142,7 +136,7 @@ abstract sealed class TestHarness(
     Future {
       val i = fetchCounter.incrementAndGet()
       val result = ExpirableBox(currentValue, testClock.now() + expiration)
-      endLatch.await()
+      end.await()
       if (shouldSucceedFetch(i)) {
         result
       } else {
@@ -167,8 +161,8 @@ class PresentTestHarness(
   private val isFresh: Boolean = advanceTime < expiration - expirationMargin
   private val isExpired: Boolean = advanceTime >= expiration
   private val isStale: Boolean = !isFresh && !isExpired
-  private val _endLatch = AtomicReference(CountDownLatch(1))
-  private val _startLatch = CountDownLatch(threads)
+  private val _end = AtomicReference(CountDownLatch(1))
+  private val _start = CyclicBarrier(threads)
   private val _afterFetchLatch = AtomicReference(CountDownLatch(1))
   private val _backgroundErrorLatch = CountDownLatch(expectedBackgroundErrors)
   @volatile private var _currentValue: OpaqueValue = initialValue
@@ -180,7 +174,7 @@ class PresentTestHarness(
     testClock.advance(advanceTime)
 
     _afterFetchLatch.set(CountDownLatch(expectedFetches))
-    _endLatch.set(CountDownLatch(threads))
+    _end.set(CountDownLatch(threads))
   }
 
   override protected def expectedFetches: Int =
@@ -188,7 +182,7 @@ class PresentTestHarness(
 
   private def primeCache(): Unit = {
     cache.get()
-    endLatch.countDown()
+    end.countDown()
 
     val afterFetchCalled = afterFetchLatch.await(1, TimeUnit.SECONDS)
     if (!afterFetchCalled)
@@ -197,7 +191,7 @@ class PresentTestHarness(
       )
   }
 
-  override protected def endLatch: CountDownLatch = _endLatch.get()
+  override protected def end: CountDownLatch = _end.get()
 
   override protected def afterFetchLatch: CountDownLatch =
     _afterFetchLatch.get()
@@ -214,7 +208,7 @@ class PresentTestHarness(
     else if (isExpired) CacheState.Expired
     else CacheState.Stale
 
-  override protected def startLatch: CountDownLatch = _startLatch
+  override protected def start: CyclicBarrier = _start
 
   override protected def backgroundErrorLatch: CountDownLatch =
     _backgroundErrorLatch
@@ -233,9 +227,9 @@ class MissingTestHarness(
       failedThreads,
       successThreads
     ) {
-  private val _startLatch = CountDownLatch(threads)
+  private val _start = CyclicBarrier(threads)
   private val _afterFetchLatch = CountDownLatch(expectedFetches)
-  private val _endLatch = CountDownLatch(threads)
+  private val _end = CountDownLatch(threads)
   private val _backgroundErrorLatch = CountDownLatch(expectedBackgroundErrors)
 
   override def initialize(): Unit = {}
@@ -252,11 +246,11 @@ class MissingTestHarness(
 
   override protected def currentValue: OpaqueValue = initialValue
 
-  override protected def startLatch: CountDownLatch = _startLatch
+  override protected def start: CyclicBarrier = _start
 
   override protected def afterFetchLatch: CountDownLatch = _afterFetchLatch
 
-  override protected def endLatch: CountDownLatch = _endLatch
+  override protected def end: CountDownLatch = _end
 
   override protected def backgroundErrorLatch: CountDownLatch =
     _backgroundErrorLatch

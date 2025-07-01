@@ -25,7 +25,7 @@ import org.scalatestplus.scalacheck.ScalaCheckPropertyChecks
 
 class AsroeCacheSpec extends AnyFlatSpec with ScalaCheckPropertyChecks {
 
-  private val minSuccessful = PosInt(10)
+  private val minSuccessful = PosInt(1000)
   private val paramsPresentGen = for {
     expiration <- Gen.const(1000)
     expirationMargin <- Gen.oneOf(0, expiration / 2)
